@@ -181,7 +181,77 @@ function renderVBarChart(container, labels, values, opts) {
   container.appendChild(svg);
 }
 
+/* ---------------- Area/line chart (Evolução de vencimentos) ---------------- */
+function renderAreaChart(container, labels, values, opts) {
+  container.classList.add('chart-wrap');
+  container.innerHTML = '';
+  opts = opts || {};
+  const max = Math.max(1, ...values);
+  const width = 460, height = 210;
+  const padTop = 26, padBottom = 30, padLeft = 30, padRight = 12;
+  const plotW = width - padLeft - padRight;
+  const plotH = height - padTop - padBottom;
+  const svg = el('svg', { viewBox: '0 0 ' + width + ' ' + height, width: '100%', height: height, style: 'display:block;' });
+  const tt = _tooltipFor(container);
+  const color = opts.color || ChartPalette.emAndamento;
+
+  // Grid horizontal + eixo Y
+  for (let g = 0; g <= 4; g++) {
+    const gy = padTop + (plotH * g / 4);
+    svg.appendChild(el('line', { x1: padLeft, y1: gy, x2: width - padRight, y2: gy, stroke: '#eef2f7', 'stroke-width': 1 }));
+    svg.appendChild(el('text', { x: padLeft - 6, y: gy + 3, 'text-anchor': 'end', 'font-size': '9.5', fill: '#7c8ba0' },
+      [document.createTextNode(String(Math.round(max * (1 - g / 4))))]));
+  }
+
+  const n = labels.length;
+  const step = n > 1 ? plotW / (n - 1) : plotW;
+  const points = values.map((v, i) => ({
+    x: padLeft + i * step,
+    y: padTop + (plotH - (v / max) * plotH),
+    v
+  }));
+
+  // Área preenchida
+  if (points.length > 0) {
+    const baseY = padTop + plotH;
+    let areaPath = 'M ' + points[0].x + ' ' + baseY;
+    points.forEach(p => { areaPath += ' L ' + p.x + ' ' + p.y; });
+    areaPath += ' L ' + points[points.length - 1].x + ' ' + baseY + ' Z';
+    svg.appendChild(el('path', { d: areaPath, fill: color, 'fill-opacity': '0.12' }));
+
+    // Linha
+    const linePath = 'M ' + points.map(p => p.x + ' ' + p.y).join(' L ');
+    svg.appendChild(el('path', { d: linePath, fill: 'none', stroke: color, 'stroke-width': 2.5, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  }
+
+  // Pontos + rótulos
+  points.forEach((pt, i) => {
+    if (pt.v > 0) {
+      svg.appendChild(el('text', { x: pt.x, y: pt.y - 10, 'text-anchor': 'middle', 'font-size': '10.5', 'font-weight': '700', fill: '#1c2a3a' },
+        [document.createTextNode(String(pt.v))]));
+    }
+    const circle = el('circle', { cx: pt.x, cy: pt.y, r: 4, fill: '#fff', stroke: color, 'stroke-width': 2.5, style: 'cursor:pointer;transition:r .12s;' });
+    circle.addEventListener('mouseenter', (e) => {
+      circle.setAttribute('r', 6);
+      const rect = container.getBoundingClientRect();
+      _showTip(container, tt, e.clientX - rect.left + 10, e.clientY - rect.top - 30,
+        '<strong>' + labels[i] + '</strong><br>' + pt.v + ' processo' + (pt.v !== 1 ? 's' : ''));
+    });
+    circle.addEventListener('mousemove', (e) => {
+      const rect = container.getBoundingClientRect();
+      tt.style.left = (e.clientX - rect.left + 10) + 'px'; tt.style.top = (e.clientY - rect.top - 30) + 'px';
+    });
+    circle.addEventListener('mouseleave', () => { circle.setAttribute('r', 4); _hideTip(tt); });
+    svg.appendChild(circle);
+    svg.appendChild(el('text', { x: pt.x, y: height - 8, 'text-anchor': 'middle', 'font-size': '10', fill: '#7c8ba0' },
+      [document.createTextNode(labels[i])]));
+  });
+
+  container.appendChild(svg);
+}
+
 window.ChartPalette = ChartPalette;
 window.renderDoughnut = renderDoughnut;
 window.renderHBarChart = renderHBarChart;
 window.renderVBarChart = renderVBarChart;
+window.renderAreaChart = renderAreaChart;

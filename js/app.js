@@ -1,8 +1,5 @@
 /* =========================================================================
  * app.js — Controlador da interface (SPA com roteamento por hash)
- * -------------------------------------------------------------------------
- * Responsável por: roteamento, renderização das views, filtros, ordenação,
- * modais de e-mail, calendário, histórico e interações do usuário.
  * ========================================================================= */
 
 const App = (() => {
@@ -33,12 +30,12 @@ const App = (() => {
   }
 
   const STATUS_META = {
-    'Em andamento': { cls: 'em-andamento', cor: ChartPalette.emAndamento },
-    'Próximo do vencimento': { cls: 'proximo', cor: ChartPalette.proximo },
-    'Vence hoje': { cls: 'vence-hoje', cor: ChartPalette.venceHoje },
-    'Prorrogado': { cls: 'prorrogado', cor: ChartPalette.prorrogado },
-    'Vencido': { cls: 'vencido', cor: ChartPalette.vencido },
-    'Concluído': { cls: 'concluido', cor: ChartPalette.concluido }
+    'Em andamento': { cls: 'em-andamento', cor: ChartPalette.emAndamento, soft: '#e7effd' },
+    'Próximo do vencimento': { cls: 'proximo', cor: ChartPalette.proximo, soft: '#fdf1de' },
+    'Vence hoje': { cls: 'vence-hoje', cor: ChartPalette.venceHoje, soft: '#fde7e7' },
+    'Prorrogado': { cls: 'prorrogado', cor: ChartPalette.prorrogado, soft: '#f0e9fd' },
+    'Vencido': { cls: 'vencido', cor: ChartPalette.vencido, soft: '#fbe3e3' },
+    'Concluído': { cls: 'concluido', cor: ChartPalette.concluido, soft: '#e2f6ee' }
   };
 
   function badge(status) {
@@ -144,7 +141,29 @@ const App = (() => {
     c.emailsPreparar = c.venceHoje;
     return c;
   }
-
+  /* ▶ NOVO — Distribuição de processos por proximidade do vencimento (dias úteis). */
+function distribuirPorUrgencia(list) {
+  const buckets = {
+    'Vencidos':       { count: 0, color: ChartPalette.vencido },
+    'Vencem hoje':    { count: 0, color: ChartPalette.venceHoje },
+    '1–3 dias úteis': { count: 0, color: ChartPalette.proximo },
+    '4–7 dias úteis': { count: 0, color: '#f59e0b' },
+    '8–15 dias úteis':{ count: 0, color: ChartPalette.emAndamento },
+    '16+ dias úteis': { count: 0, color: ChartPalette.concluido }
+  };
+  list.filter(p => p.statusDerivado !== 'Concluído').forEach(p => {
+    if (p.vencimento < Dados.hojeISO) buckets['Vencidos'].count++;
+    else if (p.vencimento === Dados.hojeISO) buckets['Vencem hoje'].count++;
+    else {
+      const d = Dados.diasUteisRestantes(p.vencimento, Dados.hojeISO);
+      if (d <= 3) buckets['1–3 dias úteis'].count++;
+      else if (d <= 7) buckets['4–7 dias úteis'].count++;
+      else if (d <= 15) buckets['8–15 dias úteis'].count++;
+      else buckets['16+ dias úteis'].count++;
+    }
+  });
+  return Object.entries(buckets).map(([label, v]) => ({ label, value: v.count, color: v.color }));
+}
   function renderHero(c) {
     const h = new Date().getHours();
     const saud = h < 5 ? 'Boa madrugada' : h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
@@ -174,7 +193,8 @@ const App = (() => {
       '<div class="hero-stats">' + statHtml + '</div>' +
     '</div>';
   }
-function renderKpi(c) {
+
+  function renderKpi(c) {
     const items = [
       { label: 'Total de processos', value: c.total, icon: ICONS.total, cor: ChartPalette.emAndamento, soft: '#e7effd', route: 'processos', param: null },
       { label: 'Em andamento', value: c.emAndamento, icon: ICONS.andamento, cor: ChartPalette.emAndamento, soft: '#e7effd', route: 'processos', param: 'st:em-andamento' },
@@ -205,6 +225,76 @@ function renderKpi(c) {
     '</div>';
   }
 
+  /* ▶ NOVO — Seção "Lembretes de hoje" (Dashboard) */
+  function renderLembretesHoje(list) {
+    const hoje = Dados.hojeISO;
+    const lembretes = list.filter(p =>
+      p.statusDerivado !== 'Concluído' &&
+      Dados.calcularLembrete(p.vencimento) === hoje
+    );
+    const count = lembretes.length;
+
+    const header =
+      '<div class="card-head">' +
+        '<h3>' + ICONS.alerta + ' Lembretes de hoje' +
+          (count > 0 ? '<span class="lembrete-count">' + count + '</span>' : '') +
+        '</h3>' +
+        '<span class="sub">último dia para prorrogação</span>' +
+      '</div>';
+
+    let bodyHtml;
+    if (count === 0) {
+      bodyHtml =
+        '<div class="lembrete-empty">' + ICONS.check +
+          '<div class="t">Nenhum lembrete programado para hoje</div>' +
+          '<div class="s">Você será avisado quando um prazo se aproximar.</div>' +
+        '</div>';
+    } else {
+      bodyHtml = '<ul class="lembrete-list">' + lembretes.map(p => {
+        const dias = Dados.diasUteisRestantes(p.vencimento, hoje);
+        return '<li class="lembrete-item" data-nup="' + esc(p.nup) + '">' +
+          '<div class="lembrete-info">' +
+            '<div class="lembrete-top">' +
+              '<span class="lembrete-nup">' + esc(p.nup) + '</span>' +
+              '<span class="lembrete-area">' + esc(p.area) + '</span>' +
+              badge(p.statusDerivado) +
+            '</div>' +
+            '<div class="lembrete-resumo">' + esc(p.resumo) + '</div>' +
+            '<div class="lembrete-meta">' +
+              '<span>Vence em <strong>' + fmtData(p.vencimento) + '</strong></span>' +
+              '<span><strong>' + dias + '</strong> dia' + (dias !== 1 ? 's' : '') + ' útil' + (dias !== 1 ? 'eis' : '') + ' restante' + (dias !== 1 ? 's' : '') + '</span>' +
+            '</div>' +
+          '</div>' +
+          '<div class="lembrete-action">' +
+            '<button class="btn btn-primary btn-sm btn-lembrete-email" data-nup="' + esc(p.nup) + '">' +
+              ICONS.email + ' Preparar e-mail' +
+            '</button>' +
+          '</div>' +
+        '</li>';
+      }).join('') + '</ul>';
+    }
+
+    return '<div class="card lembretes-card">' + header + '<div class="card-body">' + bodyHtml + '</div></div>';
+  }
+
+  /* ▶ NOVO — Bind da seção "Lembretes de hoje" */
+  function bindLembretesHoje() {
+    $$('.btn-lembrete-email').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nup = btn.dataset.nup;
+        const p = processosComStatus().find(x => x.nup === nup);
+        if (p) abrirModalEmail(p, 'Lembrete');
+      });
+    });
+    $$('.lembrete-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        navigate('processo', item.dataset.nup);
+      });
+    });
+  }
+
   function renderAtencao(list) {
     const prioridade = ['Vence hoje', 'Vencido', 'Próximo do vencimento', 'Prorrogado'];
     const rank = st => { const i = prioridade.indexOf(st); return i === -1 ? 99 : i; };
@@ -230,45 +320,23 @@ function renderKpi(c) {
     const c = contar();
     const list = processosComStatus();
 
-    // Dados por status (doughnut)
-    const porStatus = [
-      { label: 'Em andamento', value: c.emAndamento, color: ChartPalette.emAndamento },
-      { label: 'Próximo do venc.', value: c.proximo, color: ChartPalette.proximo },
-      { label: 'Vence hoje', value: c.venceHoje, color: ChartPalette.venceHoje },
-      { label: 'Prorrogado', value: c.prorrogado, color: ChartPalette.prorrogado },
-      { label: 'Vencido', value: c.vencido, color: ChartPalette.vencido },
-      { label: 'Concluído', value: c.concluido, color: ChartPalette.concluido }
-    ].filter(d => d.value > 0);
-
-    // Dados por área (barras horizontais)
-    const porArea = AREAS.map(a => ({ label: a.nome, value: list.filter(p => p.area === a.nome).length, color: ChartPalette.emAndamento }));
-
-    // Evolução de vencimentos (próximas 6 semanas)
-    const vencimentos = list.filter(p => p.statusDerivado !== 'Concluído').map(p => p.vencimento).sort();
-    const hoje = new Date(Dados.hojeISO + 'T12:00:00');
-    const semanas = [];
-    for (let i = 0; i < 6; i++) {
-      const ini = new Date(hoje); ini.setDate(ini.getDate() + i * 7);
-      const fim = new Date(ini); fim.setDate(fim.getDate() + 6);
-      const iniISO = ini.toISOString().slice(0, 10);
-      const fimISO = fim.toISOString().slice(0, 10);
-      const count = vencimentos.filter(v => v >= iniISO && v <= fimISO).length;
-      semanas.push({ label: fmtData(iniISO), value: count });
-    }
-
     return '<div class="dash">' +
       renderHero(c) +
-      '<div style="margin-top:18px">' + renderAcoesHoje(c) + '</div>' +
+      /* ▶ MUDOU — nova seção logo abaixo de "Ações de hoje" */
+      '<div style="margin-top:16px">' + renderLembretesHoje(list) + '</div>' +
 
       '<div class="grid-2" style="margin-top:18px">' +
         '<div class="card"><div class="card-head"><h3>Processos por status</h3></div><div class="card-body"><div id="chart-status"></div></div></div>' +
         '<div class="card"><div class="card-head"><h3>Processos por área</h3></div><div class="card-body"><div id="chart-area"></div></div></div>' +
       '</div>' +
 
-      '<div class="grid-2-1" style="margin-top:16px">' +
+      '<div class="grid-2" style="margin-top:16px">' +
         '<div class="card"><div class="card-head"><h3>Evolução de vencimentos</h3><span class="sub">próximas 6 semanas</span></div><div class="card-body"><div id="chart-evolucao"></div></div></div>' +
-        '<div class="card"><div class="card-head"><h3>Processos que exigem atenção</h3></div><div class="card-body" style="padding-top:8px">' + renderAtencao(list) + '</div></div>' +
+        '<div class="card"><div class="card-head"><h3>Urgência dos prazos</h3><span class="sub">processos por proximidade do vencimento</span></div><div class="card-body"><div id="chart-urgencia"></div></div></div>' +
       '</div>' +
+      '<div style="margin-top:16px">' +
+        '<div class="card"><div class="card-head"><h3>Processos que exigem atenção</h3></div><div class="card-body" style="padding-top:8px">' + renderAtencao(list) + '</div></div>' +
+  '</div>' +
     '</div>';
   }
 
@@ -305,9 +373,14 @@ function renderKpi(c) {
       const iniISO = ini.toISOString().slice(0, 10), fimISO = fim.toISOString().slice(0, 10);
       labels.push(fmtData(iniISO)); values.push(vencimentos.filter(v => v >= iniISO && v <= fimISO).length);
     }
-    renderVBarChart($('#chart-evolucao'), labels, values, { color: ChartPalette.emAndamento });
+renderAreaChart($('#chart-evolucao'), labels, values, { color: ChartPalette.emAndamento });
 
+const urgenciaItems = distribuirPorUrgencia(list);
+renderHBarChart($('#chart-urgencia'), urgenciaItems);
     $$('.attention-item').forEach(i => i.addEventListener('click', () => navigate('processo', i.dataset.nup)));
+
+    /* ▶ MUDOU — bind da nova seção */
+    bindLembretesHoje();
   }
 
   function irParaStatus(status) {
@@ -374,7 +447,6 @@ function renderKpi(c) {
     }).join('');
 
     const rows = list.map(p => {
-      const proximaAcao = proximaAcaoDe(p);
       return '<tr class="clickable" data-nup="' + esc(p.nup) + '">' +
         '<td class="cell-nup">' + esc(p.nup) + '</td>' +
         '<td class="cell-area">' + esc(p.area) + '</td>' +
@@ -440,73 +512,206 @@ function renderKpi(c) {
     bindProcessos();
   }
 
-  /* ---------- Detalhe do processo ---------- */
+  /* ======================================================================
+   * ▶ MUDOU — Detalhe do processo (redesenhado, completo e moderno)
+   * ====================================================================== */
+
+  /* Progresso do prazo baseado no prazo interno original (não muda com prorrogação). */
+  function progressoDoPrazo(p) {
+    const total = p.prazoInterno || CONFIG.prazoPadrao;
+    const vencOriginal = Dados.calcularPrazo(p.dataAbertura, total);
+    const restantesOrig = Dados.diasUteisRestantes(vencOriginal, Dados.hojeISO);
+    const decorridos = Math.max(0, Math.min(total, total - restantesOrig));
+    return {
+      total,
+      decorridos,
+      percent: total > 0 ? Math.round((decorridos / total) * 100) : 0
+    };
+  }
+
   function renderProcesso(nup) {
     const p = processosComStatus().find(x => x.nup === nup);
     if (!p) return '<div class="empty-state" style="padding:60px"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6"/><path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><div class="t">Processo não encontrado</div></div>';
 
     const st = p.statusDerivado;
+    const meta = STATUS_META[st] || { cor: ChartPalette.neutro, soft: '#eef2f7' };
     const tl = Dados.timelineDoProcesso(p);
     const hist = HISTORICO.filter(h => h.nup === nup);
+    const hoje = Dados.hojeISO;
+    const fim = p.vencimento;
+    const lembrete = Dados.calcularLembrete(fim);
+    const diasRestantes = Dados.diasUteisRestantes(fim, hoje);
+    const prog = progressoDoPrazo(p);
 
-    const info = [
-      { k: 'Área', v: p.area },
-      { k: 'Data de abertura', v: fmtData(p.dataAbertura) },
-      { k: 'Prazo interno', v: p.prazoInterno + ' ' + CONFIG.unidade.toLowerCase() },
-      { k: 'Prazo de resposta', v: p.novaDataResposta ? '<span style="text-decoration:line-through;color:var(--text-muted)">' + fmtData(p.prazoResposta) + '</span> → ' + fmtData(p.novaDataResposta) : fmtData(p.prazoResposta) },
-      { k: 'Status', v: badge(st) },
-      { k: 'Nova data', v: p.novaDataResposta ? fmtData(p.novaDataResposta) : '—' },
-      { k: 'Observação', v: p.observacao || '—' }
-    ];
-
-    const tlHtml = tl.map(ev => {
-      let cor = ChartPalette.neutro;
-      if (ev.tipo === 'inicio') cor = ChartPalette.emAndamento;
-      else if (ev.tipo === 'email') cor = ChartPalette.proximo;
-      else if (ev.tipo === 'vencimento') cor = ChartPalette.venceHoje;
-      else if (ev.tipo === 'prorrogacao') cor = ChartPalette.prorrogado;
-      return '<div class="tl-item" style="--tl-color:' + cor + '">' +
-        '<div class="tl-dot"></div>' +
-        '<div class="tl-body">' +
-          '<div><div class="tl-rotulo">' + ev.rotulo + '</div><div class="tl-descricao">' + esc(ev.descricao) + '</div></div>' +
-          '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">' +
-            '<div class="tl-data">' + fmtData(ev.data) + '</div>' +
-            (ev.tipo === 'email' ? '<button class="btn btn-primary btn-sm btn-preparar-email" data-modelo="' + ev.modelo + '" data-nup="' + esc(p.nup) + '">' + ICONS.email + ' Preparar e-mail</button>' : '') +
+    /* ---- HERO ---- */
+    const heroHtml =
+      '<div class="proc-hero" style="--proc-color:' + meta.cor + ';--proc-soft:' + meta.soft + '">' +
+        '<div class="proc-hero-main">' +
+          '<div class="proc-hero-breadcrumb">' +
+            '<a href="#/processos">← Processos</a>' +
+            '<span class="sep">/</span>' +
+            '<span>' + esc(p.nup) + '</span>' +
           '</div>' +
+          '<div class="proc-hero-title">' + esc(p.resumo) + '</div>' +
+          '<div class="proc-hero-meta">' +
+            '<span class="proc-hero-nup">' + esc(p.nup) + '</span>' +
+            '<span class="proc-hero-area">' + esc(p.area) + '</span>' +
+            badge(st) +
+          '</div>' +
+        '</div>' +
+        '<div class="proc-hero-action">' +
+          '<button class="btn btn-primary btn-lg" id="btn-email-principal" data-nup="' + esc(p.nup) + '">' +
+            ICONS.email + ' Preparar e-mail' +
+          '</button>' +
+        '</div>' +
+      '</div>';
+
+    /* ---- BARRA DE PROGRESSO ---- */
+    let diasTxt = '';
+    if (hoje === fim) diasTxt = '<strong>Vence hoje</strong>';
+    else if (fim < hoje) diasTxt = '<strong>Vencido</strong>';
+    else diasTxt = '<strong>' + diasRestantes + '</strong> dia' + (diasRestantes !== 1 ? 's' : '') + ' útil' + (diasRestantes !== 1 ? 'eis' : '') + ' restante' + (diasRestantes !== 1 ? 's' : '');
+
+    const progressHtml =
+      '<div class="proc-progress">' +
+        '<div class="proc-progress-head">' +
+          '<div>' +
+            '<div class="k">Progresso do prazo</div>' +
+            '<div class="v">' + prog.percent + '% concluído</div>' +
+          '</div>' +
+          '<div class="proc-progress-meta">' + diasTxt + '</div>' +
+        '</div>' +
+        '<div class="proc-progress-bar">' +
+          '<div class="proc-progress-fill" style="width:' + prog.percent + '%;background:' + meta.cor + '"></div>' +
+        '</div>' +
+        '<div class="proc-progress-dates">' +
+          '<span>Abertura ' + fmtData(p.dataAbertura) + '</span>' +
+          '<span>Lembrete ' + fmtData(lembrete) + '</span>' +
+          '<span>Vencimento ' + fmtData(fim) + '</span>' +
+        '</div>' +
+      '</div>';
+
+    /* ---- CARDS DE MÉTRICA ---- */
+    const metrics = [
+      {
+        k: 'Vencimento',
+        v: fmtData(fim),
+        s: p.novaDataResposta ? 'Prorrogado (era ' + fmtData(p.prazoResposta) + ')' : 'Prazo original',
+        icon: ICONS.venceHoje,
+        cor: meta.cor,
+        soft: meta.soft
+      },
+      {
+        k: 'Dias úteis restantes',
+        v: diasRestantes > 0 ? String(diasRestantes) : (hoje === fim ? '0' : '—'),
+        s: diasRestantes > 0 ? 'para o vencimento' : (hoje === fim ? 'vence hoje' : 'prazo encerrado'),
+        icon: ICONS.andamento,
+        cor: ChartPalette.emAndamento,
+        soft: '#e7effd'
+      },
+      {
+        k: 'Lembrete',
+        v: fmtData(lembrete),
+        s: CONFIG.diasAntesVencimento + ' dias úteis antes',
+        icon: ICONS.proximo,
+        cor: ChartPalette.proximo,
+        soft: '#fdf1de'
+      },
+      {
+        k: 'Abertura',
+        v: fmtData(p.dataAbertura),
+        s: 'Prazo: ' + (p.prazoInterno || CONFIG.prazoPadrao) + ' dias úteis',
+        icon: ICONS.total,
+        cor: ChartPalette.concluido,
+        soft: '#e2f6ee'
+      }
+    ];
+    const metricsHtml = '<div class="proc-metrics">' + metrics.map(m =>
+      '<div class="proc-metric" style="--m-color:' + m.cor + ';--m-soft:' + m.soft + '">' +
+        '<div class="proc-metric-icon">' + m.icon + '</div>' +
+        '<div class="proc-metric-body">' +
+          '<div class="k">' + m.k + '</div>' +
+          '<div class="v">' + m.v + '</div>' +
+          '<div class="s">' + m.s + '</div>' +
+        '</div>' +
+      '</div>'
+    ).join('') + '</div>';
+
+    /* ---- TIMELINE ---- */
+    const tlHtml = tl.map((ev, i) => {
+      let cor = ChartPalette.neutro, soft = '#eef2f7', ic = ICONS.andamento;
+      if (ev.tipo === 'inicio') { cor = ChartPalette.emAndamento; soft = '#e7effd'; ic = ICONS.total; }
+      else if (ev.tipo === 'email') { cor = ChartPalette.proximo; soft = '#fdf1de'; ic = ICONS.email; }
+      else if (ev.tipo === 'vencimento') { cor = ChartPalette.venceHoje; soft = '#fde7e7'; ic = ICONS.venceHoje; }
+      else if (ev.tipo === 'prorrogacao') { cor = ChartPalette.prorrogado; soft = '#f0e9fd'; ic = ICONS.prorrogado; }
+      const isPast = ev.data <= hoje;
+      return '<div class="proc-tl-item ' + (isPast ? 'past' : '') + '" style="--tl-color:' + cor + ';--tl-soft:' + soft + '">' +
+        '<div class="proc-tl-marker">' +
+          '<div class="proc-tl-dot">' + ic + '</div>' +
+          (i < tl.length - 1 ? '<div class="proc-tl-line"></div>' : '') +
+        '</div>' +
+        '<div class="proc-tl-content">' +
+          '<div class="proc-tl-head">' +
+            '<span class="proc-tl-rotulo">' + ev.rotulo + '</span>' +
+            '<span class="proc-tl-date">' + fmtData(ev.data) + '</span>' +
+          '</div>' +
+          '<div class="proc-tl-desc">' + esc(ev.descricao) + '</div>' +
+          (ev.tipo === 'email' ? '<button class="btn btn-ghost btn-sm btn-preparar-email" data-modelo="' + ev.modelo + '" data-nup="' + esc(p.nup) + '">' + ICONS.email + ' Preparar e-mail</button>' : '') +
         '</div>' +
       '</div>';
     }).join('');
+    const timelineHtml = '<div class="proc-timeline">' + tlHtml + '</div>';
 
+    /* ---- HISTÓRICO ---- */
     const histHtml = hist.length ? hist.map(h => {
       const tipo = h.tipo;
-      const ic = tipo === 'confirmado' ? ICONS.check : (tipo === 'preparado' ? ICONS.email : (tipo === 'aberto' ? ICONS.email : ICONS.andamento));
-      const cor = tipo === 'confirmado' ? '#0e9f6e' : (tipo === 'preparado' ? '#1f5bd8' : (tipo === 'aberto' ? '#7c3aed' : '#64748b'));
-      const cls = tipo === 'confirmado' ? 'confirmado' : (tipo === 'preparado' ? 'preparado' : tipo);
-      return '<li class="history-item">' +
-        '<span class="history-time">' + esc(h.data) + '</span>' +
-        '<span class="history-icon" style="background:' + cor + '1a;color:' + cor + '">' + ic + '</span>' +
-        '<span class="history-text">' + esc(h.texto) + '</span>' +
-      '</li>';
-    }).join('') : '<div class="empty-state" style="padding:20px"><div class="t">Nenhum registro ainda</div></div>';
-
-    return '<div>' +
-      '<a href="#/processos" class="btn btn-ghost btn-sm" style="margin-bottom:14px">← Voltar aos processos</a>' +
-      '<div class="card"><div class="detail-header">' +
-        '<div class="detail-title">' +
-          '<div class="nup">' + esc(p.nup) + '</div>' +
-          '<div class="resumo">' + esc(p.resumo) + '</div>' +
-          '<div class="detail-meta">' + badge(st) + '<span class="badge badge-em-andamento" style="background:var(--surface-2)">' + esc(p.area) + '</span></div>' +
+      let ic = ICONS.andamento, cor = '#64748b', soft = '#eef2f7';
+      if (tipo === 'confirmado') { ic = ICONS.check; cor = '#0e9f6e'; soft = '#e2f6ee'; }
+      else if (tipo === 'preparado') { ic = ICONS.email; cor = '#1f5bd8'; soft = '#e7effd'; }
+      else if (tipo === 'aberto') { ic = ICONS.email; cor = '#7c3aed'; soft = '#f0e9fd'; }
+      else if (tipo === 'nao-enviado') { ic = ICONS.alerta; cor = '#c22626'; soft = '#fde3e3'; }
+      return '<li class="proc-hist-item">' +
+        '<span class="proc-hist-icon" style="background:' + soft + ';color:' + cor + '">' + ic + '</span>' +
+        '<div class="proc-hist-body">' +
+          '<div class="proc-hist-text">' + esc(h.texto) + '</div>' +
+          '<div class="proc-hist-time">' + esc(h.data) + '</div>' +
         '</div>' +
-        '<button class="btn btn-primary" id="btn-email-principal" data-nup="' + esc(p.nup) + '">' + ICONS.email + ' Preparar e-mail</button>' +
-      '</div></div>' +
+      '</li>';
+    }).join('') : '<div class="empty-state" style="padding:24px"><div class="t">Nenhum registro ainda</div></div>';
+    const historyHtml = '<ul class="proc-history-list">' + histHtml + '</ul>';
 
-      '<div class="card" style="margin-top:16px"><div class="card-body" style="padding:0"><div class="info-grid">' +
-        info.map(i => '<div class="info-cell"><div class="k">' + i.k + '</div><div class="v">' + i.v + '</div></div>').join('') +
-      '</div></div></div>' +
+    /* ---- INFO DO PROCESSO ---- */
+    const info = [
+      { k: 'Área', v: esc(p.area) },
+      { k: 'Data de abertura', v: fmtData(p.dataAbertura) },
+      { k: 'Prazo interno', v: (p.prazoInterno || CONFIG.prazoPadrao) + ' ' + CONFIG.unidade.toLowerCase() },
+      { k: 'Prazo de resposta', v: p.novaDataResposta ? '<span style="text-decoration:line-through;color:var(--text-muted)">' + fmtData(p.prazoResposta) + '</span> → ' + fmtData(p.novaDataResposta) : fmtData(p.prazoResposta) },
+      { k: 'Status', v: badge(st) },
+      { k: 'Nova data', v: p.novaDataResposta ? fmtData(p.novaDataResposta) : '—' },
+      { k: 'Observação', v: esc(p.observacao || '—') }
+    ];
+    const infoHtml = '<div class="proc-info-grid">' + info.map(i =>
+      '<div class="proc-info-cell"><div class="k">' + i.k + '</div><div class="v">' + i.v + '</div></div>'
+    ).join('') + '</div>';
 
-      '<div class="grid-2" style="margin-top:16px">' +
-        '<div class="card"><div class="card-head"><h3>Linha do tempo</h3></div><div class="card-body"><div class="timeline">' + tlHtml + '</div></div></div>' +
-        '<div class="card"><div class="card-head"><h3>Histórico do processo</h3></div><div class="card-body" style="padding-top:8px"><ul class="history-list">' + histHtml + '</ul></div></div>' +
+    /* ---- MONTAGEM ---- */
+    return '<div class="proc-detail">' +
+      heroHtml +
+      progressHtml +
+      metricsHtml +
+      '<div class="proc-grid">' +
+        '<div class="card proc-card">' +
+          '<div class="card-head"><h3>Linha do tempo</h3><span class="sub">eventos e comunicações</span></div>' +
+          '<div class="card-body">' + timelineHtml + '</div>' +
+        '</div>' +
+        '<div class="card proc-card">' +
+          '<div class="card-head"><h3>Histórico</h3><span class="sub">' + hist.length + ' registro' + (hist.length !== 1 ? 's' : '') + '</span></div>' +
+          '<div class="card-body" style="padding-top:8px">' + historyHtml + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card proc-info-card">' +
+        '<div class="card-head"><h3>Informações do processo</h3></div>' +
+        '<div class="card-body" style="padding:0">' + infoHtml + '</div>' +
       '</div>' +
     '</div>';
   }
@@ -646,18 +851,15 @@ function renderKpi(c) {
     const diasPrevMes = new Date(hoje.getFullYear(), hoje.getMonth(), 0).getDate();
 
     let cells = '';
-    // dias do mês anterior
     for (let i = startOffset - 1; i >= 0; i--) {
       const d = diasPrevMes - i;
       const iso = new Date(hoje.getFullYear(), hoje.getMonth() - 1, d).toISOString().slice(0, 10);
       cells += celulaDia(d, iso, true);
     }
-    // dias do mês atual
     for (let d = 1; d <= diasNoMes; d++) {
       const iso = new Date(hoje.getFullYear(), hoje.getMonth(), d).toISOString().slice(0, 10);
       cells += celulaDia(d, iso, false, list);
     }
-    // completar grid
     const total = startOffset + diasNoMes;
     const restante = (7 - (total % 7)) % 7;
     for (let d = 1; d <= restante; d++) {
